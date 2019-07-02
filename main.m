@@ -161,11 +161,27 @@ clear i j A;
 [usections, ~, ic] = unique(sectionlength,'rows','stable');
 ustruts = size(usections,1);
 
-load('partsdefinition_workspace2');
+load('partsdefinition_workspace3');
+
+% Prompts user to select analysis type
+anatype = questdlg('Please choose analysis type', ...
+	'Analysis type', ...
+	'Implicit','Explicit','Implicit');
+switch anatype
+    case 'Implicit'
+        esolid = esolid_imp;
+        ssolid = ssolid_imp;
+        analysis = 'imp';
+    case 'Explicit'
+        esolid = esolid_exp;
+        ssolid = ssolid_exp;
+        analysis = 'exp';
+end
+
 
 % Create solid sections
 snodes(:,:,ustruts) = zeros(size(ssolid,1),4);
-selements(:,:,ustruts) = zeros(20,21);
+selements(:,:,ustruts) = zeros(size(esolid,1),size(esolid,2));
 for i=1:ustruts
    for j=1:size(ssolid,1)
        snodes(j,:,i) = [j, ssolid(j,1:2), ssolid(j,3).*usections(i,2)];
@@ -196,7 +212,7 @@ name = inputdlg(prompt,title,[1 50],{'Input file','Job-1','Model-1'});
 selpath = uigetdir('','Select save location');
 
 % Create file. 'w' for overwrite permission, 'a' for append permission 
-fid3=fopen([selpath '/' char(name{1}) '.inp'],'a');
+fid3=fopen([selpath '/' char(name{1}) '.inp'],'w');
 
 %% Headings and Preprint
 
@@ -217,18 +233,30 @@ clear i;
 spn = permute(snodes,[2,1,3]);
 spe = permute(selements, [2,1,3]);
 for i=1:size(usections,1)
+    
     % Part name
     fprintf(fid3,'*Part, name=Solid-Strut%u\n*Node\n',i);
     % Node
     fprintf(fid3,'      %u, %.9f, %.9f, %.9f\n',spn(:,:,i));
-    % Element
-    fprintf(fid3,'*Element, type=C3D20R\n');
-    fprintf(fid3,['%u, %u, %u, %u, %u, %u, %u, %u, %u, %u, %u, %u, %u, %u,'...
-        '%u, %u,\n   %u, %u, %u, %u, %u\n'],spe(:,:,i));
+    switch anatype
+        case 'Implicit'
+            % Element
+            fprintf(fid3,'*Element, type=C3D20R\n');
+            fprintf(fid3,['%u, %u, %u, %u, %u, %u, %u, %u, %u, %u,'...
+                '%u, %u, %u, %u, %u, %u,\n   %u, %u, %u, %u, %u\n'],...
+                spe(:,:,i));
+        case 'Explicit'
+            % Element
+            fprintf(fid3,'*Element, type=C3D8R\n');
+            fprintf(fid3,['%u, %u, %u, %u, %u, %u, %u, %u, %u'...
+                '\n'],spe(:,:,i));
+    end
     % Nset
-    fprintf(fid3,'*Nset, nset=Solid-Section-Nset%u, generate\n   1, 132, 1\n',i);
+    fprintf(fid3,['*Nset, nset=Solid-Section-Nset%u, generate\n'...
+        '1, %u, 1\n'],i, size(snodes,1));
     % Elset
-    fprintf(fid3,'*Elset, elset=Solid-Section-Elset%u, generate\n   1, 20, 1\n',i);
+    fprintf(fid3,['*Elset, elset=Solid-Section-Elset%u, generate\n'...
+        '1, %u, 1\n'],i, size(selements,1));
     % Section
     fprintf(fid3,['** Section: Solid-Section\n*Solid Section, '...
         'elset=Solid-Section-Elset%u, material=Mat-Props-Solid\n,\n'],i);
@@ -413,51 +441,94 @@ for im=1:size(indexM,1)
 end
 
 % Create Elset for both ends of each solid instance
-% For each Elset, creat a Surface for coupling constraint
-elset = {'4,  20,  4';'1,  17,  4'};
-for o=2:3:(size(transf,1)-1)    % loop through each solid instance
-   for p=2:-1:1                    % two surfaces
-       fprintf(fid3,['*Elset, elset=SS-%u-Elset-S%u, instance=Solid-Strut'...
-           '-%u, generate\n  ' elset{p} '\n'], (o+1)/3, p, (o+1)/3);
-       fprintf(fid3,['*Surface, type=ELEMENT, name=SS-%u-Surf-S%u\n'...
-           'SS-%u-Elset-S%u, S%u\n'], (o+1)/3, p, (o+1)/3, p, p);
-   end
+% For each Elset, create a Surface for coupling constraint
+switch anatype
+    case 'Implicit'
+        elset = {'4,  20,  4';'1,  17,  4'};
+        for o=2:3:(size(transf,1)-1)    % loop through each solid instance
+            for p=2:-1:1                    % two surfaces
+                fprintf(fid3,['*Elset, elset=SS-%u-Elset-S%u, instance=Solid-Strut'...
+                    '-%u, generate\n  ' elset{p} '\n'], (o+1)/3, p, (o+1)/3);
+                fprintf(fid3,['*Surface, type=ELEMENT, name=SS-%u-Surf-S%u\n'...
+                    'SS-%u-Elset-S%u, S%u\n'], (o+1)/3, p, (o+1)/3, p, p);
+            end
+        end
+    case 'Explicit'
+        elset = {'1,  2,  3, 13, 14, 15, 25, 26, 27, 37, 38, 39';...
+            '10, 11, 12, 22, 23, 24, 34, 35, 36, 46, 47, 48'};
+        surf = {1; 2};
+        for o=2:3:(size(transf,1)-1)    % loop through each solid instance
+            for p=2:-1:1                    % two surfaces
+                fprintf(fid3,['*Elset, elset=SS-%u-Elset-S%u, instance=Solid-Strut'...
+                    '-%u\n  ' elset{p} '\n'], (o+1)/3, surf{p}, (o+1)/3);
+                fprintf(fid3,['*Surface, type=ELEMENT, name=SS-%u-Surf-S%u\n'...
+                    'SS-%u-Elset-S%u, S%u\n'], (o+1)/3, surf{p}, (o+1)/3,...
+                    surf{p}, surf{p});
+            end
+        end
 end
+
 
 % Create surfaces for beam junction
 % One for master and other for slave
 
-for s=1:s(end)
-    fprintf(fid3,['*Surface, type=Node, name=WS-%u-Surf-M\n'...
-        'WS-%u%u-NSetJunM-%u, 1\n'], s, ms(s,1), ms(s,2), s);
-    fprintf(fid3,['*Surface, type=Node, name=WS-%u-Surf-S\n'...
-        'WS-%u%u-NSetJunS-%u, 1\n'], s, ms(s,1), ms(s,2), s);
-    
-end
+% for s=1:s(end)
+%     fprintf(fid3,['*Surface, type=Node, name=WS-%u-Surf-M\n'...
+%         'WS-%u%u-NSetJunM-%u, 1\n'], s, ms(s,1), ms(s,2), s);
+%     fprintf(fid3,['*Surface, type=Node, name=WS-%u-Surf-S\n'...
+%         'WS-%u%u-NSetJunS-%u, 1\n'], s, ms(s,1), ms(s,2), s);
+%     
+% end
 
 % Create tie constraint (beam junction)
 
+% for s=1:s(end)
+%     fprintf(fid3,['** Constraint: N-N-Tie-%u\n*Tie, name=N-N-Tie-%u, '...
+%         'adjust=no\nWS-%u-Surf-S, WS-%u-Surf-M\n'], s, s, s, s);
+% end
+
+% Create mpc constraint (beam junction)
+
 for s=1:s(end)
-    fprintf(fid3,['** Constraint: N-N-Tie-%u\n*Tie, name=N-N-Tie-%u, '...
-        'adjust=no\nWS-%u-Surf-S, WS-%u-Surf-M\n'], s, s, s, s);
+    fprintf(fid3,['** Constraint: N-N-mpc-%u\n*MPC\nTIE, '...
+        'WS-%u%u-NSetJunS-%u, WS-%u%u-NSetJunM-%u\n'], s, ms(s,1),...
+        ms(s,2), s, ms(s,1), ms(s,2), s);
 end
+
 
 % Create coupling constraint (solid to beam)
 
 rn = ei+oi;
 
-for n=1:rn(end)
-    if mod(n,2) == 0
-    fprintf(fid3,['** Constraint: N-S-%u\n*Coupling, constraint name='...                     % we're currently here
-        'N-S-%u, ref node=WS-%u%u-NsetInt-%u, surface=SS-%u-Surf-S%u\n'...
-        '*Distributing, weighting method=UNIFORM\n'], n, n, n/2, ...
-        (mod(n,2)*-1)+2, n, n/2, mod(n,2)+1);        
-    else
-    fprintf(fid3,['** Constraint: N-S-%u\n*Coupling, constraint name='...                     
-        'N-S-%u, ref node=WS-%u%u-NsetInt-%u, surface=SS-%u-Surf-S%u\n'...
-        '*Distributing, weighting method=UNIFORM\n'], n, n, (n/2)+0.5, ...
-        (mod(n,2)*(-1))+2, n, (n/2)+0.5, mod(n,2)+1);
-    end
+switch anatype
+    case 'Implicit'
+        for n=1:rn(end)
+            if mod(n,2) == 0
+                fprintf(fid3,['** Constraint: N-S-%u\n*Coupling, constraint name='...
+                    'N-S-%u, ref node=WS-%u%u-NsetInt-%u, surface=SS-%u-Surf-S%u\n'...
+                    '*Distributing, weighting method=UNIFORM\n'], n, n, n/2, ...
+                    (mod(n,2)*-1)+2, n, n/2, mod(n,2)+1);
+            else
+                fprintf(fid3,['** Constraint: N-S-%u\n*Coupling, constraint name='...
+                    'N-S-%u, ref node=WS-%u%u-NsetInt-%u, surface=SS-%u-Surf-S%u\n'...
+                    '*Distributing, weighting method=UNIFORM\n'], n, n, (n/2)+0.5, ...
+                    (mod(n,2)*(-1))+2, n, (n/2)+0.5, mod(n,2)+1);
+            end
+        end
+    case 'Explicit'
+        for n=1:rn(end)
+            if mod(n,2) == 0
+                fprintf(fid3,['** Constraint: N-S-%u\n*Coupling, constraint name='...
+                    'N-S-%u, ref node=WS-%u%u-NsetInt-%u, surface=SS-%u-Surf-S%u\n'...
+                    '*Distributing, weighting method=UNIFORM\n'], n, n, n/2, ...
+                    (mod(n,2)*-1)+2, n, n/2, mod(n,2)+2);
+            else
+                fprintf(fid3,['** Constraint: N-S-%u\n*Coupling, constraint name='...
+                    'N-S-%u, ref node=WS-%u%u-NsetInt-%u, surface=SS-%u-Surf-S%u\n'...
+                    '*Distributing, weighting method=UNIFORM\n'], n, n, (n/2)+0.5, ...
+                    (mod(n,2)*(-1))+2, n, (n/2)+0.5, mod(n,2));
+            end
+        end        
 end
 
 fprintf(fid3,'*End Assembly\n**\n');
@@ -466,25 +537,29 @@ clear labo labe i j k m n o p elset ei oi ni is im in rs s rn
 %% Materials
 
 Materials = {'** MATERIALS';
-'**';
-'*Material, name=Mat-Props-Solid';
-'*Elastic';
-'1930., 0.3';
-'*Plastic';
-'170., 0.';
-'175.,10.'};
+    '**';
+    '*Material, name=Mat-Props-Solid';
+    '*Density';
+    ' 8e-06,';
+    '*Elastic';
+    '1930., 0.3';
+    '*Plastic';
+    '170., 0.';
+    '175.,10.'};
 
 for i=1:length(Materials)
     fprintf(fid3,'%s\n', Materials{i});
 end
 
 Materials = {'*Material, name=Mat-Props-Beam';
-'*Elastic';
-'1930., 0.3';
-'*Plastic';
-'170., 0.';
-'175.,10.';
-'**'};
+    '*Density';
+    ' 8e-06,';
+    '*Elastic';
+    '1930., 0.3';
+    '*Plastic';
+    '170., 0.';
+    '175.,10.';
+    '**'};
 
 for j=1:length(Materials)
     fprintf(fid3,'%s\n', Materials{j});
@@ -493,32 +568,60 @@ clear i j;
 
 %% Step
 
-load = {'** ----------------------------------------------------------------';
-'** ';
-'** STEP: Load';
-'**'; 
-'*Step, name=Load, nlgeom=YES, inc=1000';
-'*Static';
-'0.1, 1., 1e-05, 1.';
-'**'; 
-'** OUTPUT REQUESTS';
-'** ';
-'*Restart, write, frequency=0';
-'** ';
-'** FIELD OUTPUT: F-Output-1';
-'**';
-'*Output, field';
-'*Node Output';
-'CF, RF, U';
-'*Element Output, directions=YES';
-'LE, PE, PEEQ, PEMAG, S, SF';
-'*Contact Output';
-'CDISP, CSTRESS';
-'**';
-'** HISTORY OUTPUT: H-Output-1';
-'**';
-'*Output, history, variable=PRESELECT';
-'*End Step'};
+switch anatype
+    case 'Implicit'
+        load = {'** ----------------------------------------------------------------';
+            '** ';
+            '** STEP: Load';
+            '**';
+            '*Step, name=Load, nlgeom=YES, inc=1000';
+            '*Static';
+            '0.1, 1., 1e-05, 1.';
+            '**';
+            '** OUTPUT REQUESTS';
+            '** ';
+            '*Restart, write, frequency=0';
+            '** ';
+            '** FIELD OUTPUT: F-Output-1';
+            '**';
+            '*Output, field';
+            '*Node Output';
+            'CF, RF, U';
+            '*Element Output, directions=YES';
+            'LE, PE, PEEQ, PEMAG, S, SF';
+            '**';
+            '** HISTORY OUTPUT: H-Output-1';
+            '**';
+            '*Output, history, variable=PRESELECT';
+            '*End Step'};
+    case 'Explicit'
+        load = {'** ----------------------------------------------------------------';
+            '** ';
+            '** STEP: Load';
+            '**';
+            '*Step, name=load, nlgeom=YES';
+            '*Dynamic, Explicit';
+            ', 5.';
+            '*Bulk Viscosity';
+            '0.06, 1.2';
+            '**';
+            '** OUTPUT REQUESTS';
+            '** ';
+            '*Restart, write, number interval=1, time marks=NO';
+            '** ';
+            '** FIELD OUTPUT: F-Output-1';
+            '**';
+            '*Output, field';
+            '*Node Output';
+            'A, RF, U, V';
+            '*Element Output, directions=YES';
+            'LE, PE, PEEQ, S, SF';
+            '**';
+            '** HISTORY OUTPUT: H-Output-1';
+            '**';
+            '*Output, history, variable=PRESELECT';
+            '*End Step'};   
+end
 
 for i=1:length(load)
     fprintf(fid3,'%s\n', load{i});
